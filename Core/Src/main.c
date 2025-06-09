@@ -1,235 +1,275 @@
-/* USER CODE BEGIN Header */
-/**
-  ******************************************************************************
-  * @file           : main.c
-  * @brief          : Main program body
-  ******************************************************************************
-  * @attention
-  *
-  * Copyright (c) 2025 STMicroelectronics.
-  * All rights reserved.
-  *
-  * This software is licensed under terms that can be found in the LICENSE file
-  * in the root directory of this software component.
-  * If no LICENSE file comes with this software, it is provided AS-IS.
-  *
-  ******************************************************************************
-  */
-/* USER CODE END Header */
-/* Includes ------------------------------------------------------------------*/
-#include "main.h"
-#include "cmsis_os.h"
+#include "stm32f1xx.h"
+#include "stm32f1xx_hal.h"
+#include "stdio.h"
+#include <math.h>
+#define direction 1
+#define enable 7
+#define brake 4
+#define RAD_TO_DEG 57.2957795
+float roll=0;
+float pitch=0;
+float yaw=0;
+float rollCal=0;
+float pitchCal=0;
+float X=0;
+float Y=0;
+float Z=0;
+int a=0;
+int16_t AccX=0;
+int16_t AccY=0;
+int16_t AccZ=0;
+int16_t err=0;
+int16_t KP=15;
 
-/* Private includes ----------------------------------------------------------*/
-/* USER CODE BEGIN Includes */
-
-/* USER CODE END Includes */
-
-/* Private typedef -----------------------------------------------------------*/
-/* USER CODE BEGIN PTD */
-
-/* USER CODE END PTD */
-
-/* Private define ------------------------------------------------------------*/
-/* USER CODE BEGIN PD */
-
-/* USER CODE END PD */
-
-/* Private macro -------------------------------------------------------------*/
-/* USER CODE BEGIN PM */
-
-/* USER CODE END PM */
-
-/* Private variables ---------------------------------------------------------*/
-/* Definitions for defaultTask */
-osThreadId_t defaultTaskHandle;
-const osThreadAttr_t defaultTask_attributes = {
-  .name = "defaultTask",
-  .stack_size = 128 * 4,
-  .priority = (osPriority_t) osPriorityNormal,
-};
-/* USER CODE BEGIN PV */
-
-/* USER CODE END PV */
-
-/* Private function prototypes -----------------------------------------------*/
-void SystemClock_Config(void);
-void StartDefaultTask(void *argument);
-
-/* USER CODE BEGIN PFP */
-
-/* USER CODE END PFP */
-
-/* Private user code ---------------------------------------------------------*/
-/* USER CODE BEGIN 0 */
-
-/* USER CODE END 0 */
-
-/**
-  * @brief  The application entry point.
-  * @retval int
-  */
-int main(void)
-{
-
-  /* USER CODE BEGIN 1 */
-
-  /* USER CODE END 1 */
-
-  /* MCU Configuration--------------------------------------------------------*/
-
-  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-  HAL_Init();
-
-  /* USER CODE BEGIN Init */
-
-  /* USER CODE END Init */
-
-  /* Configure the system clock */
-  SystemClock_Config();
-
-  /* USER CODE BEGIN SysInit */
-
-  /* USER CODE END SysInit */
-
-  /* Initialize all configured peripherals */
-  /* USER CODE BEGIN 2 */
-
-  /* USER CODE END 2 */
-
-  /* Init scheduler */
-  osKernelInitialize();
-
-  /* USER CODE BEGIN RTOS_MUTEX */
-  /* add mutexes, ... */
-  /* USER CODE END RTOS_MUTEX */
-
-  /* USER CODE BEGIN RTOS_SEMAPHORES */
-  /* add semaphores, ... */
-  /* USER CODE END RTOS_SEMAPHORES */
-
-  /* USER CODE BEGIN RTOS_TIMERS */
-  /* start timers, add new ones, ... */
-  /* USER CODE END RTOS_TIMERS */
-
-  /* USER CODE BEGIN RTOS_QUEUES */
-  /* add queues, ... */
-  /* USER CODE END RTOS_QUEUES */
-
-  /* Create the thread(s) */
-  /* creation of defaultTask */
-  defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
-
-  /* USER CODE BEGIN RTOS_THREADS */
-  /* add threads, ... */
-  /* USER CODE END RTOS_THREADS */
-
-  /* USER CODE BEGIN RTOS_EVENTS */
-  /* add events, ... */
-  /* USER CODE END RTOS_EVENTS */
-
-  /* Start scheduler */
-  osKernelStart();
-
-  /* We should never get here as control is now taken by the scheduler */
-
-  /* Infinite loop */
-  /* USER CODE BEGIN WHILE */
-  while (1)
-  {
-    /* USER CODE END WHILE */
-
-    /* USER CODE BEGIN 3 */
-  }
-  /* USER CODE END 3 */
+void delay (int x){
+	TIM2->PSC=x-1;
+	TIM2->ARR=8000-1;
+	TIM2->CR1|=0b1;
+	while(!(TIM2->SR&0b1));
+	TIM2->SR&=~(0b1);
+	TIM2->CR1&=~(0b1);
+	TIM2->ARR=0xffffffff;
 }
 
-/**
-  * @brief System Clock Configuration
-  * @retval None
-  */
-void SystemClock_Config(void)
-{
-  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
-  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+int read_roll();
+void calibrate();
 
-  /** Initializes the RCC Oscillators according to the specified parameters
-  * in the RCC_OscInitTypeDef structure.
-  */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
-  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
-  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
-  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE;
-  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
-  {
-    Error_Handler();
-  }
 
-  /** Initializes the CPU, AHB and APB buses clocks
-  */
-  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
-                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
-  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_HSI;
-  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
-  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+int main() {
+// Configurations
+    RCC->APB2ENR = (0b1<<0) | (0b11<<2) |(0b11<<0);
+    RCC->APB1ENR = (0b11<<0) | (1<<21);
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_0) != HAL_OK)
-  {
-    Error_Handler();
-  }
+    GPIOA->CRL = 0x3A333333;
+    GPIOB->CRL = 0xff444244;
+    GPIOB->CRH = 0x33333333;
+
+
+//PWM
+	TIM3->ARR = 4000-1;
+	TIM3->PSC = 355-1;
+	TIM3->CCMR1 |= (0b110 << 4) | (1 << 3);                //PWM Mode
+	TIM3->CCER  |= (1 << 0);                               //channels 1 enable
+	TIM3->CR1   |= (1 << 7);                               //auto ARR PreLoad
+	TIM3->CR1   |= (0b10 << 5);
+	TIM3->EGR   |= (1 << 0);
+	TIM3->CR1   |= (1 << 0);
+//I2C
+    I2C1->CR1|=0b1;
+    I2C1->CR1&=~(1<<0);
+    I2C1->CR1|=(1<<15);
+    I2C1->CR1&=~(1<<15);
+    I2C1->CR2=0x8;
+    I2C1->CCR|=0b101000;
+    I2C1->TRISE=9;
+    I2C1->CR1|=0b1;
+
+    while(I2C1->SR2&(1<<1));
+    I2C1->CR1|=(1<<8);
+    while(!(I2C1->SR1&(1<<0)));
+    a=I2C1->SR1;
+    for(int i=0;i<10;i++);
+    I2C1->DR=0b11010000;
+    while(!(I2C1->SR1&(1<<1)));
+    a=I2C1->SR1;a=I2C1->SR2;
+    while(!(I2C1->SR1&(1<<7)));
+    I2C1->DR=0b01101011;
+    while(!(I2C1->SR1&(1<<7)));
+    I2C1->DR=0x00;
+    while(!(I2C1->SR1&(1<<2)));
+    I2C1->CR1|=(1<<9);
+
+    delay(50);
+    calibrate();
+
+//Loop
+    while (1) {
+    	int roll = read_roll();
+       	err= roll-0;                                         //TO BE CHANGED
+
+//MOTOR CONTROL
+       	GPIOB->ODR ^= (1<<9);                                // TEST LED
+
+       	if(err>5){
+    	    TIM3->CCR1 = (TIM3->ARR -(KP * err));
+    	    GPIOA->ODR |= (1 << enable) | (1 << brake);                   // PA7=1, PA4=1 (Enable & Brake = OFF)
+
+    	    GPIOA->ODR &= ~(1<< direction);                          // PA1=0 → Direction: CCW
+    	    delay(500);
+    	    GPIOA->ODR |= (1 << direction);                          // PA1=1 → Direction: CW
+       	}
+       	else if(err<-5){
+    	    TIM3->CCR1 = (TIM3->ARR - (KP *-1*err));
+    	    GPIOA->ODR |= (1 << enable) | (1 << brake);                   // PA7=1, PA4=1 (Enable & Brake = OFF)
+
+    	    GPIOA->ODR |= (1 << direction);                          // PA1=1 → Direction: CW
+    	    delay(500);
+    	    GPIOA->ODR &= ~(1<< direction);                          // PA1=0 → Direction: CCW
+       	 }
+
+       	delay(500);
+	    GPIOA->ODR &= ~(1 << brake);               // Brake till next reading
+       	delay(1000);
+
+
+    }
 }
 
-/* USER CODE BEGIN 4 */
+int read_roll(){
+	I2C1->CR1&=~(1<<9);
+	while(I2C1->SR2&(1<<1));
+	I2C1->CR1|=(1<<8);
+	while(!(I2C1->SR1&(1<<0)));
+    a=I2C1->SR1;
+	    for(int i=0;i<10;i++);
+	    I2C1->DR=0b11010000;
+	    while(!(I2C1->SR1&(1<<1)));
+	    a=I2C1->SR1;a=I2C1->SR2;
+    while(!(I2C1->SR1&(1<<7)));
+   I2C1->DR=0x1C;
+	    while(!(I2C1->SR1&(1<<7)));
+	    I2C1->DR=0x10;
+	    while(!(I2C1->SR1&(1<<2)));
+	    I2C1->CR1|=(1<<9);
 
-/* USER CODE END 4 */
+	I2C1->CR1&=~(1<<9);
+	while(I2C1->SR2&(1<<1));
+	I2C1->CR1|=(1<<8);
+	while(!(I2C1->SR1&(1<<0)));
+	a=I2C1->SR1;
+	for(int i=0;i<10;i++);
+	I2C1->DR=0b11010000;
+	while(!(I2C1->SR1&(1<<1)));
+	a=I2C1->SR1;a=I2C1->SR2;
+	while(!(I2C1->SR1&(1<<7)));
+    I2C1->DR=0x3B;
+	    while(!(I2C1->SR1&(1<<2)));
+	    I2C1->CR1|=(1<<9);
+	I2C1->CR1&=~(1<<9);
+	while(I2C1->SR2&(1<<1));
+	I2C1->CR1|=(1<<8);
+	I2C1->CR1|=(1<<10);
+	while(!(I2C1->SR1&(1<<0)));
+	a=I2C1->SR1;
+	for(int i=0;i<10;i++);
+	I2C1->DR=0b11010001;
+	while(!(I2C1->SR1&(1<<1)));
+	a=I2C1->SR1;a=I2C1->SR2;
 
-/* USER CODE BEGIN Header_StartDefaultTask */
-/**
-  * @brief  Function implementing the defaultTask thread.
-  * @param  argument: Not used
-  * @retval None
-  */
-/* USER CODE END Header_StartDefaultTask */
-void StartDefaultTask(void *argument)
-{
-  /* USER CODE BEGIN 5 */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
-  /* USER CODE END 5 */
+   	while(!(I2C1->SR1&(1<<6)));
+   	AccX=I2C1->DR;
+   	AccX=AccX<<8;
+   	while(!(I2C1->SR1&(1<<6)));
+   	AccX|=I2C1->DR;
+   	X=(float)AccX/4096.0;
+
+   	while(!(I2C1->SR1&(1<<6)));
+   	AccY=I2C1->DR;
+   	AccY=AccY<<8;
+   	while(!(I2C1->SR1&(1<<6)));
+   	AccY|=I2C1->DR;
+   	Y=(float)AccY/4096.0;
+
+   	while(!(I2C1->SR1&(1<<6)));
+   	AccZ=I2C1->DR;
+   	AccZ=AccZ<<8;
+   	I2C1->CR1|=(1<<9);
+   	I2C1->CR1&=~(1<<10);
+   	while(!(I2C1->SR1&(1<<6)));
+   	AccZ|=I2C1->DR;
+   	Z=(float)
+   	AccZ/4096.0;
+   	a=I2C1->DR;
+
+//CALCULATIONS
+   	roll = atan(Y / sqrt(X * X + Z * Z));
+   	roll *= RAD_TO_DEG;
+   	roll-=rollCal;
+   	return (int)roll;
 }
 
-/**
-  * @brief  This function is executed in case of error occurrence.
-  * @retval None
-  */
-void Error_Handler(void)
-{
-  /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
-  __disable_irq();
-  while (1)
-  {
-  }
-  /* USER CODE END Error_Handler_Debug */
+void calibrate(){
+	int y=0;
+	float pitchSum=0;
+	float rollSum=0;
+	while (y<40) {
+		 I2C1->CR1&=~(1<<9);
+	    	while(I2C1->SR2&(1<<1));
+	    	I2C1->CR1|=(1<<8);
+	    	while(!(I2C1->SR1&(1<<0)));
+	        a=I2C1->SR1;
+	  	    for(int i=0;i<10;i++);
+	   	    I2C1->DR=0b11010000;
+	   	    while(!(I2C1->SR1&(1<<1)));
+	   	    a=I2C1->SR1;
+	   	    a=I2C1->SR2;
+	        while(!(I2C1->SR1&(1<<7)));
+	       I2C1->DR=0x1C;
+	   	    while(!(I2C1->SR1&(1<<7)));
+	   	    I2C1->DR=0x10;
+	   	    while(!(I2C1->SR1&(1<<2)));
+	   	    I2C1->CR1|=(1<<9);
+
+	    	I2C1->CR1&=~(1<<9);
+	    	while(I2C1->SR2&(1<<1));
+	    	I2C1->CR1|=(1<<8);
+	    	while(!(I2C1->SR1&(1<<0)));
+	    	a=I2C1->SR1;
+	    	for(int i=0;i<10;i++);
+	    	I2C1->DR=0b11010000;
+	    	while(!(I2C1->SR1&(1<<1)));
+	    	a=I2C1->SR1;
+	    	a=I2C1->SR2;
+	    	while(!(I2C1->SR1&(1<<7)));
+	        I2C1->DR=0x3B;
+	   	    while(!(I2C1->SR1&(1<<2)));
+	   	    I2C1->CR1|=(1<<9);
+	   	    //delay(50);
+	    	I2C1->CR1&=~(1<<9);
+	    	while(I2C1->SR2&(1<<1));
+	    	I2C1->CR1|=(1<<8);
+	    	I2C1->CR1|=(1<<10);
+	    	while(!(I2C1->SR1&(1<<0)));
+	    	a=I2C1->SR1;
+	    	for(int i=0;i<10;i++);
+	    	I2C1->DR=0b11010001;
+	    	while(!(I2C1->SR1&(1<<1)));
+	    	a=I2C1->SR1;
+	       	a=I2C1->SR2;
+
+	       	while(!(I2C1->SR1&(1<<6)));
+	       	AccX=I2C1->DR;
+	       	AccX=AccX<<8;
+	       	while(!(I2C1->SR1&(1<<6)));
+	       	AccX|=I2C1->DR;
+	       	X=(float)AccX/4096.0;
+
+	       	while(!(I2C1->SR1&(1<<6)));
+	       	AccY=I2C1->DR;
+	       	AccY=AccY<<8;
+	       	while(!(I2C1->SR1&(1<<6)));
+	       	AccY|=I2C1->DR;
+	       	Y=(float)AccY/4096.0;
+
+	       	while(!(I2C1->SR1&(1<<6)));
+	       	AccZ=I2C1->DR;
+	       	AccZ=AccZ<<8;
+	       	I2C1->CR1|=(1<<9);
+	       	I2C1->CR1&=~(1<<10);
+	       	while(!(I2C1->SR1&(1<<6)));
+	       	AccZ|=I2C1->DR;
+	       	Z=(float)AccZ/4096.0;
+	       	a=I2C1->DR;
+	       	roll = atan(Y / sqrt(X * X + Z * Z));
+	       	roll *= RAD_TO_DEG;
+	       	rollSum+=roll;
+	       	pitch = atan(-X / sqrt(Y * Y + Z * Z));
+	       	pitch *= RAD_TO_DEG;
+	       	pitchSum+=pitch;
+	       	delay(50);
+	       	y++;
+	    }
+		rollCal=(float)rollSum/40;
+		pitchCal=(float)pitchSum/40;
 }
 
-#ifdef  USE_FULL_ASSERT
-/**
-  * @brief  Reports the name of the source file and the source line number
-  *         where the assert_param error has occurred.
-  * @param  file: pointer to the source file name
-  * @param  line: assert_param error line source number
-  * @retval None
-  */
-void assert_failed(uint8_t *file, uint32_t line)
-{
-  /* USER CODE BEGIN 6 */
-  /* User can add his own implementation to report the file name and line number,
-     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
-  /* USER CODE END 6 */
-}
-#endif /* USE_FULL_ASSERT */
