@@ -7,7 +7,9 @@
 
 float roll=0;
 float roll2 = 0.0f;
+float gyro_roll=0;
 float pitch=0;
+float gyro_pitch=0;
 
 float rollCal=0;
 float pitchCal=0;
@@ -314,11 +316,21 @@ gZ_fi = 0.6*gZ + (1 - 0.6)*gZ_fi;
 		}
 		prev = current;
 
-		dt = dt * (TIM3->PSC + 1) / 72000000.0f;
+		dt = dt * (TIM3->PSC + 1) / 72000000.0f;//in seconds
+
+		//GYRO complementry filter
+
+		gyro_roll += gX_fi*dt;
+		gyro_pitch += gY_fi*dt;
+
+		float roll_fi = 0.98*gyro_roll + 0.02*roll;
+		float pitch_fi = 0.98*gyro_pitch + 0.02*pitch;
 
 
 
-		//GYRO Calculations
+
+
+		//GYRO Calculations kalman filter
 
 		float rate = gY - bias;
 		roll2 += dt * rate;
