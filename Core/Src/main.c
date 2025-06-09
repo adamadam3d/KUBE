@@ -1,4 +1,3 @@
-Latest
  // Bonus
 #include "stm32f103xb.h"
 #include "stm32f1xx_hal.h"
@@ -30,7 +29,8 @@ float gX_fi=0;
 float gY_fi=0;
 float gZ_fi=0;
 
-float dt = 1.25; //to be changed
+float dt = 0; //to be changed
+int prev = 0;
 
 int a=0;//TEMP
 
@@ -302,9 +302,24 @@ gY_fi = 0.6*gY + (1 - 0.6)*gY_fi;
 gZ_fi = 0.6*gZ + (1 - 0.6)*gZ_fi;
 
 
+//dt
 
 
-//GYRO Calculations
+		float current = TIM3->CNT;
+
+		if(current >prev){
+			dt = current - prev;
+		}else{
+			dt = current + (((int)(TIM3->ARR) + 1) - prev);
+		}
+		prev = current;
+
+		dt = dt * (TIM3->PSC + 1) / 72000000.0f;
+
+
+
+		//GYRO Calculations
+
 		float rate = gY - bias;
 		roll2 += dt * rate;
 
@@ -362,3 +377,9 @@ gZ_fi = 0.6*gZ + (1 - 0.6)*gZ_fi;
 
     }
 }
+
+
+
+
+
+
