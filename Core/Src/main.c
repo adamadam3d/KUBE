@@ -16,6 +16,8 @@ float X=0;
 float Y=0;
 float Z=0;
 
+float gyro_pitch=0;
+float gyro_roll=0;
 //GYRO
 float bias = 0.0f;
 float P00 = 0.0f, P01 = 0.0f;
@@ -26,7 +28,12 @@ float R_measure = 0.03f;
 float gX=0;
 float gY=0;
 float gZ=0;
-float dt = 0.5; //to be changed
+float gX_fi=0;
+float gY_fi=0;
+float gZ_fi=0;
+
+float dt = 0; //to be changed
+float prev = 0;
 float gY_buffer[GY_BUF_SIZE] = {0};
 float roll_buffer[roll_BUF_SIZE] = {0};
 
@@ -329,6 +336,34 @@ int main() {
 //Calculations
 		filtered_gY = filter_gY(gY);
 		filtered_roll = filter_roll(roll);
+
+//Low pass filter
+gX_fi = 0.6*gX + (1 - 0.6)*gX_fi;
+gY_fi = 0.6*gY + (1 - 0.6)*gY_fi;
+gZ_fi = 0.6*gZ + (1 - 0.6)*gZ_fi;
+
+//dt
+		float current = tim3->cnt;
+
+		if(current >prev){
+			dt = current - prev;
+		}else{
+			dt = current + (((int)(tim3->arr) + 1) - prev);
+		}
+		prev = current;
+
+		dt = dt * (tim3->psc + 1) / 72000000.0f;//in seconds
+
+		//gyro complementry filter
+
+		gyro_roll += gx_fi*dt;
+		gyro_pitch += gy_fi*dt;
+
+		float roll_fi = 0.98*gyro_roll + 0.02*roll;
+		float pitch_fi = 0.98*gyro_pitch + 0.02*pitch;
+
+
+
 
 //MOTOR CONTROL
 		if(fabs(roll)>45){
