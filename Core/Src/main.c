@@ -4,6 +4,7 @@
 #include <math.h>
 #define RAD_TO_DEG 57.2957795
 #define GY_BUF_SIZE 4
+#define GX_BUF_SIZE 4
 #define roll_BUF_SIZE 40 //  to be tested
 
 
@@ -35,11 +36,13 @@ float gZ_fi=0;
 float dt = 0; //to be changed
 float prev = 0;
 float gY_buffer[GY_BUF_SIZE] = {0};
+float gX_buffer[GX_BUF_SIZE] = {0};
 float roll_buffer[roll_BUF_SIZE] = {0};
 
 int counter=0;
 int a=0;//TEMP
 int gY_index = 0;
+int gX_index = 0;
 int roll_index = 0;
 
 
@@ -51,6 +54,7 @@ int16_t GyroX=0;
 int16_t GyroY=0;
 int16_t GyroZ=0;
 int16_t filtered_gY =0;
+int16_t filtered_gX =0;
 int16_t filtered_roll=0;
 
 uint16_t PWM_Cotrol=0;
@@ -208,6 +212,17 @@ float filter_gY(float input) {
 	return sum / GY_BUF_SIZE;
 	}
 
+float filter_gX(float input) {
+	gX_buffer[gX_index] = input;
+	gX_index = (gX_index + 1) % GX_BUF_SIZE;
+
+	float sum = 0;
+	for (int i = 0; i < GX_BUF_SIZE; i++)
+		sum += gX_buffer[i];
+
+	return sum / GX_BUF_SIZE;
+	}
+
 float filter_roll(float input) {
 	roll_buffer[roll_index] = input;
 	roll_index = (roll_index + 1) % roll_BUF_SIZE;
@@ -334,8 +349,9 @@ int main() {
 		gZ=(float)GyroZ/131;
 		a=I2C1->DR;
 //Calculations
+		filtered_gX = filter_gX(gX);
 		filtered_gY = filter_gY(gY);
-		filtered_roll = filter_roll(roll);
+		
 
 //Low pass filter
 gX_fi = 0.6*gX + (1 - 0.6)*gX_fi;
@@ -356,13 +372,13 @@ gZ_fi = 0.6*gZ + (1 - 0.6)*gZ_fi;
 
 		//gyro complementry filter
 
-		gyro_roll += gx_fi*dt;
-		gyro_pitch += gy_fi*dt;
+		gyro_roll += filtered_gX*dt;
+		gyro_pitch += filtered_gY*dt;
 
-		float roll_fi = 0.98*gyro_roll + 0.02*roll;
-		float pitch_fi = 0.98*gyro_pitch + 0.02*pitch;
+		roll = 0.98*gyro_roll + 0.02*roll;
+		pitch = 0.98*gyro_pitch + 0.02*pitch;
 
-
+		filtered_roll = filter_roll(roll);
 
 
 //MOTOR CONTROL
@@ -370,14 +386,14 @@ gZ_fi = 0.6*gZ + (1 - 0.6)*gZ_fi;
 			GPIOA->ODR &= ~(1<< 7);                  			// Stop can't balance such Angle
 		}
 		else if(roll>5){
-			PWM_Cotrol= constrain(TIM3->ARR -((17*roll + 2.5*filtered_gY)*3), 2500, 3800);
+			PWM_Cotrol= constrain(TIM3->ARR -((17*roll + 2.5*filtered_gX)*3), 2500, 3800);
     	    TIM3->CCR1 = PWM_Cotrol;
     	    GPIOA->ODR |= (1 << 7) | (1 << 4);                   // PA7=1, PA4=1 (Enable & Brake = OFF)
     	    GPIOA->ODR |= (1 << 1);                              // PA1=1 → Direction: CW
 
        	}
        	else if(roll<-5){
-       		PWM_Cotrol = constrain(TIM3->ARR - ((-17*roll + 2.5*filtered_gY)*3), 2500, 3800);
+       		PWM_Cotrol = constrain(TIM3->ARR - ((-17*roll + 2.5*filtered_gX)*3), 2500, 3800);
     	    TIM3->CCR1 = PWM_Cotrol;
     	    GPIOA->ODR |= (1 << 7) | (1 << 4);                   // PA7=1, PA4=1 (Enable & Brake = OFF)
     	    GPIOA->ODR &= ~(1<< 1);                              // PA1=0 → Direction: CCW
@@ -391,13 +407,13 @@ gZ_fi = 0.6*gZ + (1 - 0.6)*gZ_fi;
 		if(counter>=15 | fabs(roll)>30 & fabs(roll)<45){
 			if((filtered_roll-roll<3) & (filtered_roll-roll>-3) & ((roll<-5) | (roll>5))){
 				if(fabs(roll)<15 & fabs(roll)>5){
-					TIM3->CCR1 = constrain(TIM3->ARR -((17*fabs(roll) + 2.5*filtered_gY)*3), 3000, 3800);
+					TIM3->CCR1 = constrain(TIM3->ARR -((17*fabs(roll) + 2.5*filtered_gX)*3), 3000, 3800);
 				}
 				else if(fabs(roll)>15 & fabs(roll)<30 ){
-					TIM3->CCR1 = constrain(TIM3->ARR -((17*fabs(roll) + 2.5*filtered_gY)*4), 1800, 2800);
+					TIM3->CCR1 = constrain(TIM3->ARR -((17*fabs(roll) + 2.5*filtered_gX)*4), 1800, 2800);
 				}
 				else if(fabs(roll)>30 & fabs(roll)<45){
-					TIM3->CCR1 = constrain(TIM3->ARR -((17*fabs(roll) + 2.5*filtered_gY)*5), 1000, 1800);
+					TIM3->CCR1 = constrain(TIM3->ARR -((17*fabs(roll) + 2.5*filtered_gX)*5), 1000, 1800);
 				}
 				delay(400);
 				GPIOA->ODR ^= (1 << 1);                              // Toggle Direction
