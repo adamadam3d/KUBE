@@ -1,22 +1,21 @@
- // Bonus
 #include "stm32f103xb.h"
 #include "stm32f1xx_hal.h"
 #include "stdio.h"
 #include <math.h>
 #define RAD_TO_DEG 57.2957795
+#define GY_BUF_SIZE 4
+#define roll_BUF_SIZE 40 //  to be tested
+
 
 float roll=0;
 float roll2 = 0.0f;
-float gyro_roll=0;
 float pitch=0;
-float gyro_pitch=0;
-
 float rollCal=0;
 float pitchCal=0;
-
 float X=0;
 float Y=0;
 float Z=0;
+
 //GYRO
 float bias = 0.0f;
 float P00 = 0.0f, P01 = 0.0f;
@@ -27,14 +26,15 @@ float R_measure = 0.03f;
 float gX=0;
 float gY=0;
 float gZ=0;
-float gX_fi=0;
-float gY_fi=0;
-float gZ_fi=0;
+float dt = 0.5; //to be changed
+float gY_buffer[GY_BUF_SIZE] = {0};
+float roll_buffer[roll_BUF_SIZE] = {0};
 
-float dt = 0; //to be changed
-int prev = 0;
-
+int counter=0;
 int a=0;//TEMP
+int gY_index = 0;
+int roll_index = 0;
+
 
 int16_t AccX=0;
 int16_t AccY=0;
@@ -43,11 +43,10 @@ int16_t AccZ=0;
 int16_t GyroX=0;
 int16_t GyroY=0;
 int16_t GyroZ=0;
+int16_t filtered_gY =0;
+int16_t filtered_roll=0;
 
 uint16_t PWM_Cotrol=0;
-
-
-
 
 void SetUp(){
 	// Configurations
@@ -156,7 +155,7 @@ void calibrate(){
 
 void PWM_Cnfig(){
 	TIM3->ARR = 4000-1;
-	TIM3->PSC = 355-1;
+	TIM3->PSC = 2-1;
 	TIM3->CCMR1 |= (0b110 << 4) | (1 << 3);                //PWM Mode
 	TIM3->CCER  |= (1 << 0);                               //channels 1 enable
 	TIM3->CR1   |= (1 << 7);                               //auto ARR PreLoad
@@ -189,6 +188,34 @@ void I2C_Config(){
     I2C1->DR=0x00;
     while(!(I2C1->SR1&(1<<2)));
     I2C1->CR1|=(1<<9);
+}
+
+float filter_gY(float input) {
+	gY_buffer[gY_index] = input;
+	gY_index = (gY_index + 1) % GY_BUF_SIZE;
+
+	float sum = 0;
+	for (int i = 0; i < GY_BUF_SIZE; i++)
+		sum += gY_buffer[i];
+
+	return sum / GY_BUF_SIZE;
+	}
+
+float filter_roll(float input) {
+	roll_buffer[roll_index] = input;
+	roll_index = (roll_index + 1) % roll_BUF_SIZE;
+
+	float sum = 0;
+	for (int i = 0; i < roll_BUF_SIZE; i++)
+		sum += roll_buffer[i];
+	return sum / roll_BUF_SIZE;
+	}
+
+
+int constrain(int value, int min_val, int max_val) {
+    if (value < min_val) return min_val;
+    if (value > max_val) return max_val;
+    return value;
 }
 
 
@@ -268,6 +295,7 @@ int main() {
        	roll = atan(Y / sqrt(X * X + Z * Z));
        	roll *= RAD_TO_DEG;
        	roll-=rollCal;
+       	roll = (int) roll;
 //-----------------------------------------------------------------------------------------------------------------------------------
 //TEMP Reads
        	while(!(I2C1->SR1&(1<<6)));
@@ -298,100 +326,52 @@ int main() {
 		GyroZ|=I2C1->DR;
 		gZ=(float)GyroZ/131;
 		a=I2C1->DR;
-//Low pass filter
-gX_fi = 0.6*gX + (1 - 0.6)*gX_fi;
-gY_fi = 0.6*gY + (1 - 0.6)*gY_fi;
-gZ_fi = 0.6*gZ + (1 - 0.6)*gZ_fi;
+//Calculations
+		filtered_gY = filter_gY(gY);
+		filtered_roll = filter_roll(roll);
 
-
-//dt
-
-
-		float current = TIM3->CNT;
-
-		if(current >prev){
-			dt = current - prev;
-		}else{
-			dt = current + (((int)(TIM3->ARR) + 1) - prev);
-		}
-		prev = current;
-
-		dt = dt * (TIM3->PSC + 1) / 72000000.0f;//in seconds
-
-		//GYRO complementry filter
-
-		gyro_roll += gX_fi*dt;
-		gyro_pitch += gY_fi*dt;
-
-		float roll_fi = 0.98*gyro_roll + 0.02*roll;
-		float pitch_fi = 0.98*gyro_pitch + 0.02*pitch;
-
-
-
-
-
-		//GYRO Calculations kalman filter
-
-		float rate = gY - bias;
-		roll2 += dt * rate;
-
-		P00 += dt * (dt * P11 - P01 - P10 + Q_angle);
-		P01 -= dt * P11;
-		P10 -= dt * P11;
-		P11 += Q_bias * dt;
-
-		float S = P00 + R_measure;
-		float K0 = P00 / S;
-		float K1 = P10 / S;
-
-		float y = roll - roll2;
-		roll += K0 * y;
-		bias  += K1 * y;
-		roll2=(int)roll2;
-		float P00_temp = P00;
-		float P01_temp = P01;
-
-		P00 -= K0 * P00_temp;
-		P01 -= K0 * P01_temp;
-		P10 -= K1 * P00_temp;
-		P11 -= K1 * P01_temp;
-//-----------------------------------------------------------------------------------------------------------------------------------
 //MOTOR CONTROL
-		if(roll2>40 | roll2<-40){
-			GPIOA->ODR &= ~(1<< 7);
+		if(fabs(roll)>45){
+			GPIOA->ODR &= ~(1<< 7);                  			// Stop can't balance such Angle
 		}
-       	if(roll2>5){
-       		PWM_Cotrol = TIM3->ARR -(((20*roll2 + 6*gY)*1.8*4000)/17);
+		else if(roll>5){
+			PWM_Cotrol= constrain(TIM3->ARR -((17*roll + 2.5*filtered_gY)*3), 2500, 3800);
     	    TIM3->CCR1 = PWM_Cotrol;
     	    GPIOA->ODR |= (1 << 7) | (1 << 4);                   // PA7=1, PA4=1 (Enable & Brake = OFF)
-
-
-    	    GPIOA->ODR |= (1 << 1);                          // PA1=1 → Direction: CW
-//    	    delay(50);
-//    	    GPIOA->ODR &= ~(1<< 1);                          // PA1=0 → Direction: CCW
-
+    	    GPIOA->ODR |= (1 << 1);                              // PA1=1 → Direction: CW
 
        	}
-       	else if(roll2<-5){
-       		PWM_Cotrol = TIM3->ARR -(((20*roll2 + 6*gY)*-1.8*4000)/17);
-    	    TIM3->CCR1 = PWM_Cotrol;                             // control between 100 - 500
+       	else if(roll<-5){
+       		PWM_Cotrol = constrain(TIM3->ARR - ((-17*roll + 2.5*filtered_gY)*3), 2500, 3800);
+    	    TIM3->CCR1 = PWM_Cotrol;
     	    GPIOA->ODR |= (1 << 7) | (1 << 4);                   // PA7=1, PA4=1 (Enable & Brake = OFF)
-
-
-    	    GPIOA->ODR &= ~(1<< 1);                          // PA1=0 → Direction: CCW
-//    	    delay(50);
-//    	    GPIOA->ODR |= (1 << 1);                          // PA1=1 → Direction: CW
-
+    	    GPIOA->ODR &= ~(1<< 1);                              // PA1=0 → Direction: CCW
        	 }
-//      delay(100);
-       	delay(20);
+       	else{
+       		GPIOA->ODR &= ~(1<< 7); //Brake
+       	}
+		delay(50);
+
+
+		if(counter>=15 | fabs(roll)>30 & fabs(roll)<45){
+			if((filtered_roll-roll<3) & (filtered_roll-roll>-3) & ((roll<-5) | (roll>5))){
+				if(fabs(roll)<15 & fabs(roll)>5){
+					TIM3->CCR1 = constrain(TIM3->ARR -((17*fabs(roll) + 2.5*filtered_gY)*3), 3000, 3800);
+				}
+				else if(fabs(roll)>15 & fabs(roll)<30 ){
+					TIM3->CCR1 = constrain(TIM3->ARR -((17*fabs(roll) + 2.5*filtered_gY)*4), 1800, 2800);
+				}
+				else if(fabs(roll)>30 & fabs(roll)<45){
+					TIM3->CCR1 = constrain(TIM3->ARR -((17*fabs(roll) + 2.5*filtered_gY)*5), 1000, 1800);
+				}
+				delay(400);
+				GPIOA->ODR ^= (1 << 1);                              // Toggle Direction
+				delay(1300);
+			}
+			counter=0;
+		}
+		counter++;
        	GPIOB->ODR ^= (1<<9);                                // TEST LED
 
     }
 }
-
-
-
-
-
-
