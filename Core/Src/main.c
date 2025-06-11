@@ -7,6 +7,7 @@
 #define GX_BUF_SIZE 4
 #define roll_BUF_SIZE 40 //  to be tested
 
+		float roll_fi;
 
 float roll=0;
 float roll2 = 0.0f;
@@ -403,14 +404,13 @@ int main() {
 		}
 		prev = current;
 
-		dt = dt * (TIM3->PSC + 1) / 72000000.0f;//in seconds
+		dt = dt * (TIM3->PSC + 1) / 8000000.0f;//in seconds
 
-		//gyro complementry filter
+//gyro complementry filter
 
 		gyro_roll += filtered_gX*dt;
 		gyro_pitch += filtered_gY*dt;
-
-		roll = 0.98*gyro_roll + 0.02*roll;
+		roll_fi = 0.98*gyro_roll + 0.02*roll;
 		pitch = 0.98*gyro_pitch + 0.02*pitch;
 
 		filtered_roll = filter_roll(roll);
