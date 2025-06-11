@@ -39,6 +39,12 @@ float gY_buffer[GY_BUF_SIZE] = {0};
 float gX_buffer[GX_BUF_SIZE] = {0};
 float roll_buffer[roll_BUF_SIZE] = {0};
 
+float kalman_angle = 0.0f;
+float kalman_bias = 0.0f;
+float kalman_P00 = 0.0f, kalman_P01 = 0.0f;
+float kalman_P10 = 0.0f, kalman_P11 = 0.0f;
+
+
 int counter=0;
 int a=0;//TEMP
 int gY_index = 0;
@@ -240,7 +246,41 @@ int constrain(int value, int min_val, int max_val) {
     return value;
 }
 
+void Kalman_Init() {
+    kalman_angle = 0.0f;
+    kalman_bias = 0.0f;
+    kalman_P00 = kalman_P01 = kalman_P10 = kalman_P11 = 0.0f;
+}
 
+float Kalman_GetAngle(float acc_angle, float gyro_rate, float dt) {
+    // Predict phase
+    float rate = gyro_rate - kalman_bias;
+    kalman_angle += dt * rate;
+
+    kalman_P00 += dt * (dt * kalman_P11 - kalman_P01 - kalman_P10 + Q_angle);
+    kalman_P01 -= dt * kalman_P11;
+    kalman_P10 -= dt * kalman_P11;
+    kalman_P11 += Q_bias * dt;
+
+    // Update phase
+    float S = kalman_P00 + R_measure;
+    float K0 = kalman_P00 / S;
+    float K1 = kalman_P10 / S;
+
+    float y = acc_angle - kalman_angle;
+    kalman_angle += K0 * y;
+    kalman_bias  += K1 * y;
+
+    float P00_temp = kalman_P00;
+    float P01_temp = kalman_P01;
+
+    kalman_P00 -= K0 * P00_temp;
+    kalman_P01 -= K0 * P01_temp;
+    kalman_P10 -= K1 * P00_temp;
+    kalman_P11 -= K1 * P01_temp;
+
+    return kalman_angle;
+}
 
 int main() {
 	SetUp();
@@ -248,8 +288,9 @@ int main() {
     I2C_Config();
     delay(50);
     calibrate();
+	Kalman_Init();
 
-    while (1) {
+	while (1) {
 // ACC
     	I2C1->CR1&=~(1<<9);
     	while(I2C1->SR2&(1<<1));
@@ -351,24 +392,18 @@ int main() {
 //Calculations
 		filtered_gX = filter_gX(gX);
 		filtered_gY = filter_gY(gY);
-		
-
-//Low pass filter
-gX_fi = 0.6*gX + (1 - 0.6)*gX_fi;
-gY_fi = 0.6*gY + (1 - 0.6)*gY_fi;
-gZ_fi = 0.6*gZ + (1 - 0.6)*gZ_fi;
 
 //dt
-		float current = tim3->cnt;
+		float current = TIM3->CNT;
 
 		if(current >prev){
 			dt = current - prev;
 		}else{
-			dt = current + (((int)(tim3->arr) + 1) - prev);
+			dt = current + (((int)(TIM3->ARR) + 1) - prev);
 		}
 		prev = current;
 
-		dt = dt * (tim3->psc + 1) / 72000000.0f;//in seconds
+		dt = dt * (TIM3->PSC + 1) / 72000000.0f;//in seconds
 
 		//gyro complementry filter
 
@@ -379,6 +414,10 @@ gZ_fi = 0.6*gZ + (1 - 0.6)*gZ_fi;
 		pitch = 0.98*gyro_pitch + 0.02*pitch;
 
 		filtered_roll = filter_roll(roll);
+
+
+
+
 
 
 //MOTOR CONTROL
@@ -404,20 +443,32 @@ gZ_fi = 0.6*gZ + (1 - 0.6)*gZ_fi;
 		delay(50);
 
 
-		if(counter>=15 | fabs(roll)>30 & fabs(roll)<45){
+		if((counter>=7) | ((fabs(roll)>30) & (fabs(roll)<45))){
 			if((filtered_roll-roll<3) & (filtered_roll-roll>-3) & ((roll<-5) | (roll>5))){
-				if(fabs(roll)<15 & fabs(roll)>5){
-					TIM3->CCR1 = constrain(TIM3->ARR -((17*fabs(roll) + 2.5*filtered_gX)*3), 3000, 3800);
+				if((fabs(roll)<15) & (fabs(roll)>5)){
+					PWM_Cotrol = constrain(TIM3->ARR -((17*fabs(roll) + 1.5*filtered_gX)*3), 3200, 3800);
+					TIM3->CCR1 = PWM_Cotrol;
+					delay(1000);
+					GPIOA->ODR ^= (1 << 1);                              // Toggle Direction
+					delay(900);
+
 				}
-				else if(fabs(roll)>15 & fabs(roll)<30 ){
-					TIM3->CCR1 = constrain(TIM3->ARR -((17*fabs(roll) + 2.5*filtered_gX)*4), 1800, 2800);
+				else if((fabs(roll)>15) & (fabs(roll)<30)){
+					PWM_Cotrol = constrain(TIM3->ARR -((17*fabs(roll) + 1.5*filtered_gX)*4), 1800, 2800);
+					TIM3->CCR1 = PWM_Cotrol;
+					delay(1300);
+					GPIOA->ODR ^= (1 << 1);                              // Toggle Direction
+					delay(1200);
+
 				}
-				else if(fabs(roll)>30 & fabs(roll)<45){
-					TIM3->CCR1 = constrain(TIM3->ARR -((17*fabs(roll) + 2.5*filtered_gX)*5), 1000, 1800);
+				else if((fabs(roll)>30) & (fabs(roll)<45)){
+					PWM_Cotrol = constrain(TIM3->ARR -((17*fabs(roll) + 1.5*filtered_gX)*5), 1000, 1800);
+					TIM3->CCR1 = PWM_Cotrol;
+					delay(1500);
+					GPIOA->ODR ^= (1 << 1);                              // Toggle Direction
+					delay(1500);
 				}
-				delay(400);
-				GPIOA->ODR ^= (1 << 1);                              // Toggle Direction
-				delay(1300);
+
 			}
 			counter=0;
 		}
