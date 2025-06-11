@@ -39,6 +39,16 @@ float gY_buffer[GY_BUF_SIZE] = {0};
 float gX_buffer[GX_BUF_SIZE] = {0};
 float roll_buffer[roll_BUF_SIZE] = {0};
 
+float kalman_angle = 0.0f;
+float kalman_bias = 0.0f;
+float kalman_P00 = 0.0f, kalman_P01 = 0.0f;
+float kalman_P10 = 0.0f, kalman_P11 = 0.0f;
+
+float Q_angle = 0.001f;
+float Q_bias = 0.003f;
+float R_measure = 0.03f;
+
+
 int counter=0;
 int a=0;//TEMP
 int gY_index = 0;
@@ -240,7 +250,41 @@ int constrain(int value, int min_val, int max_val) {
     return value;
 }
 
+void Kalman_Init() {
+    kalman_angle = 0.0f;
+    kalman_bias = 0.0f;
+    kalman_P00 = kalman_P01 = kalman_P10 = kalman_P11 = 0.0f;
+}
 
+float Kalman_GetAngle(float acc_angle, float gyro_rate, float dt) {
+    // Predict phase
+    float rate = gyro_rate - kalman_bias;
+    kalman_angle += dt * rate;
+
+    kalman_P00 += dt * (dt * kalman_P11 - kalman_P01 - kalman_P10 + Q_angle);
+    kalman_P01 -= dt * kalman_P11;
+    kalman_P10 -= dt * kalman_P11;
+    kalman_P11 += Q_bias * dt;
+
+    // Update phase
+    float S = kalman_P00 + R_measure;
+    float K0 = kalman_P00 / S;
+    float K1 = kalman_P10 / S;
+
+    float y = acc_angle - kalman_angle;
+    kalman_angle += K0 * y;
+    kalman_bias  += K1 * y;
+
+    float P00_temp = kalman_P00;
+    float P01_temp = kalman_P01;
+
+    kalman_P00 -= K0 * P00_temp;
+    kalman_P01 -= K0 * P01_temp;
+    kalman_P10 -= K1 * P00_temp;
+    kalman_P11 -= K1 * P01_temp;
+
+    return kalman_angle;
+}
 
 int main() {
 	SetUp();
@@ -248,8 +292,9 @@ int main() {
     I2C_Config();
     delay(50);
     calibrate();
-
-    while (1) {
+	Kalman_Init();
+    
+	while (1) {
 // ACC
     	I2C1->CR1&=~(1<<9);
     	while(I2C1->SR2&(1<<1));
@@ -372,11 +417,7 @@ gZ_fi = 0.6*gZ + (1 - 0.6)*gZ_fi;
 
 		//gyro complementry filter
 
-		gyro_roll += filtered_gX*dt;
-		gyro_pitch += filtered_gY*dt;
-
-		roll = 0.98*gyro_roll + 0.02*roll;
-		pitch = 0.98*gyro_pitch + 0.02*pitch;
+		roll = Kalman_GetAngle(roll, filtered_gX, dt);
 
 		filtered_roll = filter_roll(roll);
 
